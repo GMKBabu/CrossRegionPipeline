@@ -1,0 +1,177 @@
+service: Pipeline # NOTE: update this with your service name
+
+provider:
+  name: aws
+#  stage: dev
+  region: ap-southeast-2
+
+resources:
+  Resources:
+    PipelineS3Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName:
+          Fn::Join:
+            - '-'
+            - - mycrossregion-pipeline
+              - Ref: AWS::AccountId
+              - ${self:provider.region}
+              - ${opt:stage, 'dev'}
+        VersioningConfiguration:
+          Status: Enabled
+
+    ArtifactS3Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        VersioningConfiguration:
+          Status: Enabled
+
+    CodePipelineIAMRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - 
+              Effect: Allow
+              Principal:
+                Service:
+                  - codepipeline.amazonaws.com
+              Action: "sts:AssumeRole"
+        ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/AmazonS3FullAccess
+          - arn:aws:iam::aws:policy/AWSCodePipelineFullAccess
+          - arn:aws:iam::aws:policy/AWSCodeBuildDeveloperAccess
+          - arn:aws:iam::aws:policy/AWSCodeDeployFullAccess
+
+    CodePipelinePipeline:
+      Type: AWS::CodePipeline::Pipeline
+      Properties:
+        RoleArn:
+          Fn::GetAtt: [ CodePipelineIAMRole , Arn ]
+        ArtifactStores:
+          -
+            ArtifactStore:
+              Location:
+                Ref: PipelineS3Bucket
+              Type: S3
+            Region: ${self:provider.region}
+          - 
+            ArtifactStore:
+              Location:
+                Fn::Join:
+                  - '-'
+                  - - mycrossregion-pipeline
+                    - Ref: AWS::AccountId
+                    - us-east-1
+                    - ${opt:stage, 'dev'}
+              Type: S3
+            Region: us-east-1
+        Stages:
+          - 
+            Name: Source
+            Actions: 
+              -
+                Name: Source
+                ActionTypeId:
+                  Category: Source
+                  Owner: ThirdParty
+                  Provider: GitHub
+                  Version: 1
+                OutputArtifacts:
+                  -
+                    Name: SourceArtifact
+                Configuration:
+                  Owner: <OWNER HERE> # Replace with your own
+                  Repo: <REPO HERE> # Replace with your own
+                  Branch: <BRANCH HERE> # Replace with your own
+                  OAuthToken: <YOUR PERSONAL TOKEN HERE> # Replace with your own
+                  PollForSourceChanges: false
+          - 
+            Name: Build
+            Actions: 
+              -
+                Name: Build
+                InputArtifacts:
+                  - 
+                    Name: SourceArtifact
+                ActionTypeId:
+                  Category: Build
+                  Owner: AWS
+                  Provider: CodeBuild
+                  Version: 1
+                OutputArtifacts:
+                  -
+                    Name: BuildArtifact
+                Region: us-east-1
+                Configuration:
+                  ProjectName: Builder-${opt:stage, 'dev'}
+                  PrimarySource: SourceArtifact
+          -
+            Name: Deploy
+            Actions:
+              -
+                Name: Deploy
+                InputArtifacts:
+                  -
+                    Name: BuildArtifact
+                ActionTypeId:
+                  Category: Deploy
+                  Owner: AWS
+                  Provider: CodeDeploy
+                  Version: 1
+                Configuration:
+                  ApplicationName:
+                    Ref: CodeDeployApplication
+                  DeploymentGroupName:
+                    Ref: CodeDeployDeploymentGroup
+
+    CodeDeployIAMRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - 
+              Effect: Allow
+              Principal:
+                Service:
+                  - codedeploy.amazonaws.com
+              Action: "sts:AssumeRole"
+        ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/service-role/AWSCodeDeployRole
+
+    CodeDeployApplication: 
+      Type: AWS::CodeDeploy::Application
+      Properties:
+        ComputePlatform: Server
+
+    CodeDeployDeploymentConfig:
+      Type: AWS::CodeDeploy::DeploymentConfig
+      Properties:
+        MinimumHealthyHosts:
+          Type: FLEET_PERCENT
+          Value: 50
+
+    CodeDeployDeploymentGroup:
+      Type: AWS::CodeDeploy::DeploymentGroup
+      Properties:
+        ApplicationName:
+          Ref: CodeDeployApplication
+        AutoScalingGroups:
+          - <AUTO SCALING GROUP> # Replace with your own
+        DeploymentConfigName:
+          Ref: CodeDeployDeploymentConfig
+        DeploymentStyle: 
+          DeploymentType: IN_PLACE
+          DeploymentOption: WITH_TRAFFIC_CONTROL
+        LoadBalancerInfo:
+          TargetGroupInfoList:
+            - Name: <TARGET GROUP NAME> # Replace with your own
+        ServiceRoleArn:
+          Fn::GetAtt: [ CodeDeployIAMRole , Arn ]
+
+  Outputs: 
+    PipelineS3Bucket:
+      Value:
+        Ref: PipelineS3Bucket
