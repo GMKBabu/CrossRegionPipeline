@@ -20,12 +20,6 @@ resources:
         VersioningConfiguration:
           Status: Enabled
 
-    ArtifactS3Bucket:
-      Type: AWS::S3::Bucket
-      Properties:
-        VersioningConfiguration:
-          Status: Enabled
-
     CodePipelineIAMRole:
       Type: AWS::IAM::Role
       Properties:
